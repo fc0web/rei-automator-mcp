@@ -15,6 +15,10 @@ AI エージェント (Claude Desktop / Cursor / Cline など) から Windows PC
     (Phase 1.5、 SendInput + KEYEVENTF_UNICODE で IME 層 skip)
   - Windows-first。 他 OS は Phase 2+ で 検討
 
+Version: 0.2.0-alpha (2026-08-15) — Phase 2 accessibility API 統合開始。
+        find_element (旧 stub の search を pywinauto uia backend で本実装) を追加、
+        click / type SetValue 経路 / screenshot / excel_aggregate は chat-Claude 分担で
+        順次追加予定 (`docs/phase2-backend-design.md` 参照)。
 Version: 0.1.0 (2026-08-15) — 初版、 rei-aios STEP 1336 直後の 独立抽出
 
 License: MIT (v0.x)。 v1.0+ で AGPL-3.0 + commercial dual への 切替可能性。
@@ -71,6 +75,9 @@ ACTION_KINDS = frozenset({
     "shell_command", "file_read", "file_write",
     "screenshot", "open", "search", "click", "type", "wait",
     "note_export", "excel_aggregate", "report", "proof_run",
+    # Phase 2 (2026-08-15〜) — accessibility API 統合。 chat-Claude 設計書
+    # `docs/phase2-backend-design.md` §2-3 提案 (search 改名 → find_element)。
+    "find_element",
 })
 
 
@@ -230,6 +237,11 @@ class Automator:
             # Phase 1.5 rei-sendinput.ps1 経由 (IME bypass)
             return self._type_via_ps1(cmd)
 
+        if k == "find_element":
+            # Phase 2 impl 順序 #2 (chat-Claude 設計書 §2-3、 search 改名)。
+            # 副作用なし の read-only action、 click / type SetValue の共通基盤。
+            return self._find_element_impl(cmd)
+
         if k == "wait":
             try:
                 sec = float(cmd)
@@ -274,6 +286,162 @@ class Automator:
             return f"stub: excel_aggregate ({cmd}) — openpyxl or Excel COM 連携 defer"
 
         return f"未知のアクション: {k} {cmd}"
+
+    # ── find_element (Phase 2、 pywinauto uia backend) ───────
+    #
+    # command 形式:
+    #   "title:保存"                                   → 名前で 探す (uia)
+    #   "auto_id:btnSave"                              → AutomationId (最も安定)
+    #   "control_type:Button"                          → control type で 探す
+    #   "title:保存;backend=win32"                     → win32 明示指定 (fallback)
+    #   "title:保存;max_depth=3;max_results=10"        → 上限指定
+    #
+    # design 方針 (docs/phase2-backend-design.md §1-1 / §2-3):
+    #   - uia を 既定、 win32 は fallback (自動選択せず、 command で 明示指定)
+    #   - ツリー全体を dump しない (max_depth / max_results で 明示的に上限)
+    #   - 副作用なし の read-only action
+    #   - pywinauto 未 install / 非 Windows でも crash せず graceful JSON error
+    #
+    # 戻り値は JSON string (result field に 埋め込み):
+    #   {"found_count": int, "returned_count": int, "truncated": bool,
+    #    "backend": "uia"|"win32", "selector": str, "results": [{name, auto_id,
+    #    control_type, class_name, rect: {left, top, right, bottom}}, ...]}
+    #
+    # error 時 (pywinauto 未 install / import 失敗 / 実行時例外) も 同 shape で
+    # {"error": str, "backend": str, "selector": str} を 返す (execute() は success=True)。
+
+    def _find_element_impl(self, spec: str) -> str:
+        # parse "selector_type:value[;key=value;...]"
+        parts = [p.strip() for p in spec.split(";") if p.strip()]
+        if not parts:
+            return json.dumps({"error": "empty spec"}, ensure_ascii=False)
+        selector = parts[0]
+        opts: dict[str, str] = {}
+        for kv in parts[1:]:
+            if "=" in kv:
+                key, val = kv.split("=", 1)
+                opts[key.strip()] = val.strip()
+
+        backend = opts.get("backend", "uia")
+        try:
+            max_results = max(1, min(int(opts.get("max_results", "25")), 200))
+        except ValueError:
+            max_results = 25
+        try:
+            max_depth = max(1, min(int(opts.get("max_depth", "4")), 10))
+        except ValueError:
+            max_depth = 4
+
+        if ":" not in selector:
+            return json.dumps(
+                {
+                    "error": "selector must be 'title:...' or 'auto_id:...' or 'control_type:...'",
+                    "selector": selector,
+                    "backend": backend,
+                },
+                ensure_ascii=False,
+            )
+        sel_kind, sel_value = selector.split(":", 1)
+        sel_kind = sel_kind.strip()
+        sel_value = sel_value.strip()
+
+        if sel_kind not in {"title", "auto_id", "control_type"}:
+            return json.dumps(
+                {
+                    "error": f"unknown selector kind: {sel_kind} (expected: title / auto_id / control_type)",
+                    "selector": selector,
+                    "backend": backend,
+                },
+                ensure_ascii=False,
+            )
+        if backend not in {"uia", "win32"}:
+            return json.dumps(
+                {
+                    "error": f"unknown backend: {backend} (expected: uia / win32)",
+                    "selector": selector,
+                    "backend": backend,
+                },
+                ensure_ascii=False,
+            )
+
+        try:
+            from pywinauto.findwindows import find_elements  # type: ignore[import-not-found]
+        except ImportError:
+            return json.dumps(
+                {
+                    "error": "pywinauto not installed. Run: pip install \"pywinauto>=0.6.9\"",
+                    "hint": "Windows-only. See docs/phase2-backend-design.md §1",
+                    "selector": selector,
+                    "backend": backend,
+                },
+                ensure_ascii=False,
+            )
+        except OSError as e:
+            # 非 Windows で pywinauto の win32 backend import が dll load 失敗する case
+            return json.dumps(
+                {
+                    "error": f"pywinauto backend not available on this OS: {e}",
+                    "selector": selector,
+                    "backend": backend,
+                },
+                ensure_ascii=False,
+            )
+
+        kwargs: dict[str, Any] = {
+            "backend": backend,
+            "top_level_only": False,
+            "depth": max_depth,
+        }
+        if sel_kind == "title":
+            kwargs["title"] = sel_value
+        elif sel_kind == "auto_id":
+            kwargs["auto_id"] = sel_value
+        elif sel_kind == "control_type":
+            kwargs["control_type"] = sel_value
+
+        try:
+            found = find_elements(**kwargs)
+        except Exception as e:  # pywinauto 内部の 多彩な例外を まとめて graceful 化
+            return json.dumps(
+                {
+                    "error": f"find_elements failed: {type(e).__name__}: {e}",
+                    "selector": selector,
+                    "backend": backend,
+                },
+                ensure_ascii=False,
+            )
+
+        results: list[dict[str, Any]] = []
+        for elem in found[:max_results]:
+            try:
+                rect = elem.rectangle
+                results.append({
+                    "name": (getattr(elem, "name", "") or "")[:200],
+                    "auto_id": (getattr(elem, "auto_id", "") or "")[:200],
+                    "control_type": (getattr(elem, "control_type", "") or "")[:100],
+                    "class_name": (getattr(elem, "class_name", "") or "")[:100],
+                    "rect": {
+                        "left": int(getattr(rect, "left", 0)),
+                        "top": int(getattr(rect, "top", 0)),
+                        "right": int(getattr(rect, "right", 0)),
+                        "bottom": int(getattr(rect, "bottom", 0)),
+                    },
+                })
+            except Exception:
+                # 個別 element の serialize 失敗は skip、 他の結果は返す
+                continue
+
+        return json.dumps(
+            {
+                "found_count": len(found),
+                "returned_count": len(results),
+                "truncated": len(found) > max_results,
+                "backend": backend,
+                "selector": selector,
+                "results": results,
+            },
+            ensure_ascii=False,
+        )
 
     # ── type via PS1 (Phase 1.5 統合) ─────────────────────
 
@@ -367,16 +535,17 @@ def _register_mcp():
 
     server = MCPServer(
         name="rei-automator",
-        version="0.1.0",
+        version="0.2.0-alpha",
         instructions=(
             "PC 自動化 (Windows) を propose → approve → execute の 3 段で 実行。 "
             "副作用の暴発を防ぐため、 execute は 承認済み action のみ 動作。 "
             "type action は IME bypass (SendInput + KEYEVENTF_UNICODE) で 日本語入力対応。 "
             "実行履歴は 自動 永続化 (~/.rei-automator-mcp/execution-log.json)。 "
-            "12 action kinds: shell_command, file_read/write, screenshot, open, search, "
-            "click, type, wait, note_export, excel_aggregate, report, proof_run。 "
-            "Phase 1 MVP: shell/file/type/wait/note/report は 実装済、 "
-            "screenshot/click/search/excel は Phase 2 accessibility API で 本実装予定。"
+            "13 action kinds: shell_command, file_read/write, screenshot, open, search, "
+            "click, type, wait, note_export, excel_aggregate, report, proof_run, find_element。 "
+            "Phase 1 MVP 実装済: shell/file/type/wait/note/report/open。 "
+            "Phase 2 開始 (2026-08-15): find_element (pywinauto uia backend) 実装、 "
+            "click / type SetValue 経路 / screenshot / excel は 順次 追加予定。"
         ),
     )
 
@@ -387,11 +556,13 @@ def _register_mcp():
         Args:
             kind: action の 種類。 shell_command / file_read / file_write / screenshot /
                   open / search / click / type / wait / note_export / excel_aggregate /
-                  report / proof_run の いずれか。
+                  report / proof_run / find_element の いずれか。
             label: action の 短い label (人間可読)。
             command: action の 引数。 kind に よって 意味が違う (shell なら command line、
                      file_read なら path、 file_write なら "path::content"、 type なら
-                     入力する 文字列、 wait なら 秒数 (string)、 open なら 開く対象 path)。
+                     入力する 文字列、 wait なら 秒数 (string)、 open なら 開く対象 path、
+                     find_element なら "title:xxx" / "auto_id:xxx" / "control_type:xxx"
+                     形式 (オプションで ";backend=win32;max_results=10" 併記可))。
             source_module: 提案元 module 名。 log 用。 default "mcp"。
         """
         try:
@@ -547,6 +718,47 @@ def _selftest() -> int:
     st = b.get_status()
     ok("executed_count" in st and st["executed_count"] == 2, "status executed_count=2")
     ok("ps1_bundled" in st, "status includes ps1_bundled")
+
+    print("\n[9] find_element (Phase 2 impl step #2, graceful degradation)")
+    ok("find_element" in ACTION_KINDS, "[9-1] find_element registered in ACTION_KINDS")
+
+    # 動作確認: pywinauto 未 install / 非 Windows でも crash せず、 JSON dict を 返すこと
+    fe = b.propose("find_element", "test find", "title:__rei_nonexistent_window_probe__")
+    ok(fe.approved is False, "[9-2] propose returns unapproved")
+    ok(b.approve(fe.id) is True, "[9-3] approve returns True")
+    r_fe = b.execute(fe.id)
+    got = r_fe.get('result', '')[:80]
+    ok(r_fe["success"] is True, f"[9-4] execute success=True (graceful), got: {got}")
+    try:
+        parsed_fe = json.loads(r_fe["result"])
+        ok(isinstance(parsed_fe, dict), "[9-5] find_element result is JSON dict")
+        # error 経路 (pywinauto 未 install) と 成功経路 (0 件 hit) 両方 accept
+        has_error = "error" in parsed_fe
+        has_results = "results" in parsed_fe and "found_count" in parsed_fe
+        ok(has_error or has_results, f"[9-6] result has 'error' or 'results' field (got keys: {list(parsed_fe.keys())})")
+    except json.JSONDecodeError:
+        ok(False, f"[9-7] find_element result is not JSON: {r_fe.get('result', '')[:120]}")
+
+    # spec parse error 検証 (pywinauto 有無に関わらず 独立に動く)
+    fe2 = b.propose("find_element", "bad spec", "malformed_no_colon")
+    b.approve(fe2.id)
+    r_fe2 = b.execute(fe2.id)
+    try:
+        parsed_fe2 = json.loads(r_fe2["result"])
+        ok("error" in parsed_fe2, "[9-8] malformed spec returns error field")
+    except json.JSONDecodeError:
+        ok(False, "[9-9] malformed spec result is not JSON")
+
+    # unknown selector kind
+    fe3 = b.propose("find_element", "unknown selector", "xpath://button[1]")
+    b.approve(fe3.id)
+    r_fe3 = b.execute(fe3.id)
+    try:
+        parsed_fe3 = json.loads(r_fe3["result"])
+        ok("error" in parsed_fe3 and "unknown selector kind" in parsed_fe3.get("error", ""),
+           "[9-10] unknown selector kind returns descriptive error")
+    except json.JSONDecodeError:
+        ok(False, "[9-11] unknown selector result is not JSON")
 
     # cleanup
     shutil.rmtree(test_dir, ignore_errors=True)

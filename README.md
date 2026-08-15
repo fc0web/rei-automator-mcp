@@ -4,7 +4,7 @@ Windows PC 自動化 (shell / file / UI / 業務) を **propose → approve → 
 
 Claude Desktop / Cursor / Cline など、 MCP 対応 client から 直接 wire して 使えます。
 
-**Version**: 0.1.0 (2026-08-15) — 初版、 Rei-AIOS `WorkspaceAutomator` からの 独立抽出。
+**Version**: 0.2.0-alpha (2026-08-15) — Phase 2 accessibility API 統合開始、 `find_element` (旧 stub の `search` を pywinauto uia backend で 本実装、 副作用なし の read-only) 追加。 `click` / `type` SetValue 経路 / `screenshot` / `excel_aggregate` は chat-Claude 分担で 順次 追加予定 (`docs/phase2-backend-design.md` 参照)。
 
 **License**: v0.x は MIT (irrevocable)。 v1.0+ で AGPL-3.0 + commercial dual への 切替可能性 予告 (LICENSE + CONTRIBUTING 参照)。
 
@@ -49,7 +49,15 @@ cd C:\Users\user\rei-automator-mcp
 pip install -r requirements.txt
 ```
 
-Python 3.10+ 必要。 依存は `mcp>=2.0.0` のみ (Python 標準ライブラリ + PowerShell (Windows 標準) のみで 全 action 動作)。
+Python 3.10+ 必要。 基本依存は `mcp>=2.0.0` のみ (Python 標準ライブラリ + PowerShell (Windows 標準) のみで Phase 1 の 12 action kinds は動作)。
+
+**Phase 2 (`find_element` 等) を 使う場合は Windows 上で 追加 install:**
+
+```bash
+pip install "pywinauto>=0.6.9" "Pillow>=10.0"
+```
+
+`pywinauto` は Windows 専用。 非 Windows / pywinauto 未 install の環境では `find_element` は graceful JSON error (`{"error": "pywinauto not installed. ..."}`) を返し、 他の 12 action kinds は影響を受けません (selftest で 検証済み)。
 
 ## 稼働確認 (selftest、 実装なし で 可)
 
@@ -57,7 +65,7 @@ Python 3.10+ 必要。 依存は `mcp>=2.0.0` のみ (Python 標準ライブラ�
 python rei_automator_mcp.py --selftest
 ```
 
-18 test 全 PASS で 稼働 準備完了。 selftest は 分離 data dir (`~/.rei-automator-mcp-selftest/`) を 使うため 本番 log を 汚染しません。
+**30 test 全 PASS** で 稼働 準備完了 (Phase 1: 22 + Phase 2 `find_element`: 8)。 selftest は 分離 data dir (`~/.rei-automator-mcp-selftest/`) を 使うため 本番 log を 汚染しません。 pywinauto 未 install の環境でも 30/30 が 通ります (graceful degradation を 明示的に verify)。
 
 ---
 
@@ -95,11 +103,11 @@ Windows Store 版 Claude Desktop の 場合、 **config は Roaming + Package sa
 | `list_executed(limit?)` | 実行済み action 一覧 (新しい順) | — |
 | `get_status()` | 現状 (pending数 / executed数 / last_action / ps1_bundled) | — |
 
-## 12 action kinds (Phase 1 MVP 実装状況)
+## 13 action kinds (Phase 1 + Phase 2 実装状況)
 
 | kind | 実装 | 備考 |
 |---|---|---|
-| `shell_command` | ✅ subprocess (Windows cp932 decode) | timeout 30 sec |
+| `shell_command` | ✅ subprocess (locale.getpreferredencoding 優先、 cp932 fallback) | timeout 30 sec |
 | `file_read` | ✅ Python 標準 | UTF-8、 最大 2000 文字 preview |
 | `file_write` | ✅ Python 標準 | command 形式 `"path::content"` |
 | `type` | ✅ **Phase 1.5 rei-sendinput.ps1 (IME bypass)** | Base64 経由、 UIPI 制約あり |
@@ -108,10 +116,27 @@ Windows Store 版 Claude Desktop の 場合、 **config は Roaming + Package sa
 | `report` | ✅ markdown 書き込み | command 形式 `"path::title"` |
 | `proof_run` | ✅ 登録のみ (実行は Rei stack defer) | — |
 | `open` | ✅ `os.startfile` (Windows) | — |
-| `screenshot` | ⏸ stub (Phase 2 accessibility API) | — |
-| `click` | ⏸ stub (Phase 2 UIA ClickablePoint) | — |
-| `search` | ⏸ stub (backend 選定 defer) | — |
-| `excel_aggregate` | ⏸ stub (openpyxl or COM 連携 defer) | — |
+| `find_element` | ✅ **Phase 2 pywinauto uia backend** (v0.2.0-alpha) | 副作用なし の read-only、 `click`/`type` SetValue の 基盤 |
+| `screenshot` | ⏸ stub (Phase 2 chat-Claude 分担、 mss / Pillow 予定) | issue [#4] |
+| `click` | ⏸ stub (Phase 2 chat-Claude 分担、 InvokePattern 経由予定) | issue [#2] |
+| `search` | ⏸ deprecated alias → `find_element` に 統合予定 | — |
+| `excel_aggregate` | ⏸ stub (Phase 2 chat-Claude 分担、 openpyxl / COM 予定) | issue [#5] |
+
+## Phase 2 進捗 (2026-08-15 開始)
+
+`docs/phase2-backend-design.md` (chat-Claude 設計書、 259 行) の 実装順序:
+
+| # | 対象 | 状態 | 担当 |
+|---|---|---|---|
+| 0-1 | `execute()` allowlist 独立 check (security fix) | ✅ commit `2348ba7` (2026-08-15) | Claude Code |
+| 0-2 | shell_command encoding (locale 優先) | ✅ commit `2348ba7` (2026-08-15) | Claude Code |
+| **2** | **`find_element` (旧 search 改名、 pywinauto uia + win32 明示指定 fallback)** | ✅ **v0.2.0-alpha 本 release** | Claude Code |
+| 3 | `click` (InvokePattern 優先、 座標 fallback) | ⏸ issue [#2] | chat-Claude 分担 |
+| 4 | `type` 共存 (SetValue 優先、 SendInput fallback、 `replace::` / `append::` mode) | ⏸ issue [#3] | chat-Claude 分担 |
+| 5 | `screenshot` (mss / Pillow、 パスのみ返却) | ⏸ issue [#4] | chat-Claude 分担 |
+| 6 | `excel_aggregate` (openpyxl / COM `GetActiveObject`) | ⏸ issue [#5] | chat-Claude 分担 |
+
+各 sub-task の 詳細 acceptance criteria は GitHub issues 参照。 CONTRIBUTING.md の Apache ICLA-style CLA 同意が pull request の 前提です。
 
 ---
 
@@ -134,6 +159,26 @@ Claude: [propose_action で kind=open, command="notepad.exe"]
         [approve/execute — rei-sendinput.ps1 経由で IME bypass 入力]
 ```
 
+**Phase 2: `find_element` 使用例 (v0.2.0-alpha)**
+
+```
+User: 開いている メモ帳 の window を UI ツリーから 探してください
+Claude: [propose_action で kind=find_element, command="title:メモ帳"]
+        [approve/execute]
+        {"found_count": 1, "returned_count": 1, "truncated": false,
+         "backend": "uia", "selector": "title:メモ帳",
+         "results": [{"name": "無題 - メモ帳", "auto_id": "",
+                      "control_type": "Window", "class_name": "Notepad",
+                      "rect": {"left": 100, "top": 50, "right": 900, "bottom": 700}}]}
+
+# selector 形式
+command="title:保存"                          → 名前で探す (uia 既定)
+command="auto_id:btnSave"                     → AutomationId (最も安定)
+command="control_type:Button"                 → control type で探す
+command="title:保存;backend=win32"            → win32 明示指定 (uia で 見つからない場合の fallback)
+command="title:.*;max_depth=3;max_results=10" → 上限指定 (default: max_depth=4, max_results=25)
+```
+
 ---
 
 ## honest scope
@@ -149,8 +194,9 @@ Claude: [propose_action で kind=open, command="notepad.exe"]
 
 ## roadmap
 
-- **v0.1** (本 release) — 3 段 lifecycle + 12 action kinds (8 実装 + 4 stub) + 永続化 + PS1 bundle
-- **v0.2** — Phase 2 accessibility API 統合 (screenshot / click / search 本実装)
+- **v0.1** (2026-08-15 initial) — 3 段 lifecycle + 12 action kinds (8 実装 + 4 stub) + 永続化 + PS1 bundle
+- **v0.2.0-alpha** (2026-08-15 本 release) — Phase 2 開始、 `find_element` (pywinauto uia backend、 副作用なし の read-only) 追加、 selftest 30/30
+- **v0.2** — `click` / `type` SetValue 共存 / `screenshot` / `excel_aggregate` (chat-Claude 分担で issue [#2]-[#5])
 - **v0.3** — AbortSignal + focus 非奪取 (Phase 3)
 - **v0.4** — cross-platform (macOS / Linux) 検討
 - **v1.0** — production ready + license trajectory 判断
