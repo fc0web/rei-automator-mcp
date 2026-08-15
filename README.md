@@ -117,10 +117,10 @@ Windows Store 版 Claude Desktop の 場合、 **config は Roaming + Package sa
 | `proof_run` | ✅ 登録のみ (実行は Rei stack defer) | — |
 | `open` | ✅ `os.startfile` (Windows) | — |
 | `find_element` | ✅ **Phase 2 pywinauto uia backend** (v0.2.0-alpha) | 副作用なし の read-only、 `click`/`type` SetValue の 基盤 |
-| `screenshot` | ⏸ stub (Phase 2 chat-Claude 分担、 mss / Pillow 予定) | issue [#4] |
-| `click` | ⏸ stub (Phase 2 chat-Claude 分担、 InvokePattern 経由予定) | issue [#2] |
+| `screenshot` | ⏸ stub (Phase 2 chat-Claude 分担、 mss / Pillow 予定) | [issue #3](https://github.com/fc0web/rei-automator-mcp/issues/3) |
+| `click` | ⏸ stub (Phase 2 chat-Claude 分担、 InvokePattern 経由予定) | [issue #1](https://github.com/fc0web/rei-automator-mcp/issues/1) |
 | `search` | ⏸ deprecated alias → `find_element` に 統合予定 | — |
-| `excel_aggregate` | ⏸ stub (Phase 2 chat-Claude 分担、 openpyxl / COM 予定) | issue [#5] |
+| `excel_aggregate` | ⏸ stub (Phase 2 chat-Claude 分担、 openpyxl / COM 予定) | [issue #4](https://github.com/fc0web/rei-automator-mcp/issues/4) |
 
 ## Phase 2 進捗 (2026-08-15 開始)
 
@@ -131,10 +131,10 @@ Windows Store 版 Claude Desktop の 場合、 **config は Roaming + Package sa
 | 0-1 | `execute()` allowlist 独立 check (security fix) | ✅ commit `2348ba7` (2026-08-15) | Claude Code |
 | 0-2 | shell_command encoding (locale 優先) | ✅ commit `2348ba7` (2026-08-15) | Claude Code |
 | **2** | **`find_element` (旧 search 改名、 pywinauto uia + win32 明示指定 fallback)** | ✅ **v0.2.0-alpha 本 release** | Claude Code |
-| 3 | `click` (InvokePattern 優先、 座標 fallback) | ⏸ issue [#2] | chat-Claude 分担 |
-| 4 | `type` 共存 (SetValue 優先、 SendInput fallback、 `replace::` / `append::` mode) | ⏸ issue [#3] | chat-Claude 分担 |
-| 5 | `screenshot` (mss / Pillow、 パスのみ返却) | ⏸ issue [#4] | chat-Claude 分担 |
-| 6 | `excel_aggregate` (openpyxl / COM `GetActiveObject`) | ⏸ issue [#5] | chat-Claude 分担 |
+| 3 | `click` (InvokePattern 優先、 座標 fallback) | ⏸ [issue #1](https://github.com/fc0web/rei-automator-mcp/issues/1) | chat-Claude 分担 |
+| 4 | `type` 共存 (SetValue 優先、 SendInput fallback、 `replace::` / `append::` mode) | ⏸ [issue #2](https://github.com/fc0web/rei-automator-mcp/issues/2) | chat-Claude 分担 |
+| 5 | `screenshot` (mss / Pillow、 パスのみ返却) | ⏸ [issue #3](https://github.com/fc0web/rei-automator-mcp/issues/3) | chat-Claude 分担 |
+| 6 | `excel_aggregate` (openpyxl / COM `GetActiveObject`) | ⏸ [issue #4](https://github.com/fc0web/rei-automator-mcp/issues/4) | chat-Claude 分担 |
 
 各 sub-task の 詳細 acceptance criteria は GitHub issues 参照。 CONTRIBUTING.md の Apache ICLA-style CLA 同意が pull request の 前提です。
 
