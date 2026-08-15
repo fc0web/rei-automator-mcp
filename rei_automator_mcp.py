@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import base64
 import json
+import locale
 import os
 import shutil
 import subprocess
@@ -149,6 +150,16 @@ class Automator:
         action = self.pending.get(action_id)
         if action is None:
             return {"success": False, "result": "action not found", "dfumt": DFUMT_FALSE}
+        # ★ 最終関門 で allowlist を 独立 check (chat-Claude 2026-08-15 critique 対応)
+        # auto_approve=True で propose が approve() を bypass するため、
+        # approve() 側だけ の check では 迂回路 が 残る。 execute() 単独 で 判断できる状態
+        # にしておく。 これで 「今後 approved を 立てる 経路が 増えても 同じ穴が 開かない」。
+        if action.kind not in self.allowed_actions:
+            return {
+                "success": False,
+                "result": f"kind not allowed: {action.kind}",
+                "dfumt": DFUMT_FALSE,
+            }
         if not action.approved:
             return {"success": False, "result": "not approved", "dfumt": DFUMT_NEITHER}
 
@@ -186,12 +197,15 @@ class Automator:
         cmd = action.command
 
         if k == "shell_command":
-            # Windows: cp932 encoding で decode (default subprocess は cp932)
+            # encoding は locale preference を 第一候補 (PowerShell 7 / 英語版 Windows で
+            # UTF-8 返される case に 対応)、 cp932 は 従来 fallback。 chat-Claude 2026-08-15
+            # critique 対応。
             r = subprocess.run(
                 cmd, shell=True, capture_output=True, timeout=30,
             )
-            out = r.stdout.decode("cp932", errors="replace") if r.stdout else ""
-            err = r.stderr.decode("cp932", errors="replace") if r.stderr else ""
+            enc = locale.getpreferredencoding(False) or "utf-8"
+            out = r.stdout.decode(enc, errors="replace") if r.stdout else ""
+            err = r.stderr.decode(enc, errors="replace") if r.stderr else ""
             body = out + (f"\n[stderr] {err}" if err else "")
             return f"exit={r.returncode}\n{body[:2000]}"
 
@@ -495,10 +509,26 @@ def _selftest() -> int:
     ok(len(parsed2) == 2, f"log grew to 2 entries (got {len(parsed2)})")
     ok(parsed2[0]["id"] == a.id and parsed2[1]["id"] == a2.id, "ordering preserved")
 
-    print("\n[5] action kind allowlist")
+    print("\n[5] action kind allowlist (approve path)")
     c = Automator(data_dir=test_dir, allowed_actions=frozenset({"file_read"}))
     aw = c.propose("shell_command", "should reject", "echo hi")
     ok(c.approve(aw.id) is False, "approve rejects disallowed kind (shell_command)")
+
+    print("\n[5b] allowlist は auto_approve を 貫通しない (chat-Claude 2026-08-15 regression)")
+    d = Automator(
+        data_dir=test_dir,
+        allowed_actions=frozenset({"file_read"}),
+        auto_approve=True,
+    )
+    aw2 = d.propose("shell_command", "should still be blocked", "echo PWNED")
+    ok(aw2.approved is True, "[5b-1] auto_approve により propose の 時点で approved=True (design)")
+    r_blocked = d.execute(aw2.id)
+    ok(r_blocked["success"] is False, "[5b-2] execute が allowlist で reject (最終関門)")
+    ok(
+        "kind not allowed" in r_blocked["result"],
+        "[5b-3] error message に kind not allowed 明示",
+    )
+    ok(r_blocked["dfumt"] == DFUMT_FALSE, "[5b-4] dfumt=FALSE on kind rejection")
 
     print("\n[6] PS1 bundle presence (rei-sendinput.ps1)")
     ok(PS1_PATH.exists(), f"PS1 bundled at {PS1_PATH}")
