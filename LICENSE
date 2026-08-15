@@ -30,3 +30,8 @@ distributions of v0.x code remain permanently under MIT.
 For v1.0 and later releases, the maintainer may switch to an AGPL-3.0 +
 commercial dual license model. This is a possibility, not a commitment.
 Users of v0.x are unaffected by any future license change.
+
+External contributions accepted via PR are subject to the Contributor License
+grant described in CONTRIBUTING.md, which retains contributor copyright while
+granting the maintainer the right to relicense contributions in future versions.
+This preserves the dual-license option for v1.0+.

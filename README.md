@@ -6,7 +6,16 @@ Claude Desktop / Cursor / Cline など、 MCP 対応 client から 直接 wire �
 
 **Version**: 0.1.0 (2026-08-15) — 初版、 Rei-AIOS `WorkspaceAutomator` からの 独立抽出。
 
-**License**: v0.x は MIT (irrevocable)。 v1.0+ で AGPL-3.0 + commercial dual への 切替可能性 予告 (LICENSE 参照)。
+**License**: v0.x は MIT (irrevocable)。 v1.0+ で AGPL-3.0 + commercial dual への 切替可能性 予告 (LICENSE + CONTRIBUTING 参照)。
+
+## ★ Canonical layer clarification (2026-08-15 architecture decision)
+
+Rei-AIOS ecosystem 内 の 責務分離:
+
+- **本 package (`rei_automator_mcp.py`) = 実行層 の 唯一の 実体**。 OS を 触る コード は ここ にしか ありません (12 action kinds の 全 実装)。
+- **Rei-AIOS TypeScript `WorkspaceAutomator` = 統合層**。 SEED_KERNEL / Peace Axiom #196 / EventBus / D-FUMT₈ semantic tagging の 深い統合は TS 側 に 残り、 自動化 が 必要な 場面では **MCP client として 本 package に 常時接続 (stdio 長寿命 1 本)** で 依頼します。
+
+「分離すべきは 実装 でなく **レイヤー**」 (chat-Claude 2026-08-15 critique 反映)。 実行層 を 2 系統 持たない ことで 「同じ label で 違うことをする」 divergence (wrong-implementation wiring pattern、 Rei stack STEP 1336 対策 4 段目) を 構造的に 排除します。
 
 ---
 
