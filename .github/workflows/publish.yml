@@ -1,0 +1,80 @@
+name: Publish to PyPI
+
+# v0.2.0a1 のようなタグを push すると本番 PyPI へ公開。
+# 手動実行 (workflow_dispatch) の場合は TestPyPI へ公開して予行演習ができる。
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: python -m pip install --upgrade build twine
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Validate metadata
+        run: python -m twine check dist/*
+
+      - name: Verify the PowerShell script is bundled
+        run: |
+          python -m zipfile -l dist/*.whl | grep -q 'rei_automator_mcp/rei-sendinput.ps1' \
+            || { echo "::error::rei-sendinput.ps1 が wheel に含まれていません"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  testpypi:
+    name: Publish to TestPyPI
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/rei-automator-mcp
+    permissions:
+      id-token: write   # Trusted Publisher の OIDC トークン発行に必須
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  pypi:
+    name: Publish to PyPI
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/rei-automator-mcp
+    permissions:
+      id-token: write   # Trusted Publisher の OIDC トークン発行に必須
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1

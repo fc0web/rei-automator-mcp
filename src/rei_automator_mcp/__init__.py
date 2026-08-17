@@ -15,10 +15,12 @@ AI エージェント (Claude Desktop / Cursor / Cline など) から Windows PC
     (Phase 1.5、 SendInput + KEYEVENTF_UNICODE で IME 層 skip)
   - Windows-first。 他 OS は Phase 2+ で 検討
 
-Version: 0.2.0-alpha (2026-08-15) — Phase 2 accessibility API 統合開始。
+Version: 0.2.0a1 (2026-08-18) — Phase 2 accessibility API 統合開始 + PyPI publish 準備。
         find_element (旧 stub の search を pywinauto uia backend で本実装) を追加、
         click / type SetValue 経路 / screenshot / excel_aggregate は chat-Claude 分担で
         順次追加予定 (`docs/phase2-backend-design.md` 参照)。
+        pyproject.toml 導入 + src/rei_automator_mcp/ layout + Trusted Publisher (OIDC) publish。
+Version: 0.2.0-alpha (2026-08-15) — 初版 alpha、 Phase 2 accessibility API 統合開始
 Version: 0.1.0 (2026-08-15) — 初版、 rei-aios STEP 1336 直後の 独立抽出
 
 License: MIT (v0.x)。 v1.0+ で AGPL-3.0 + commercial dual への 切替可能性。
@@ -535,7 +537,7 @@ def _register_mcp():
 
     server = MCPServer(
         name="rei-automator",
-        version="0.2.0-alpha",
+        version="0.2.0a1",
         instructions=(
             "PC 自動化 (Windows) を propose → approve → execute の 3 段で 実行。 "
             "副作用の暴発を防ぐため、 execute は 承認済み action のみ 動作。 "

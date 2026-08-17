@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rei-automator-mcp"
+version = "0.2.0a1"
+description = "Windows PC 自動化 (shell / file / UI / 業務) を propose → approve → execute の 3 段 lifecycle で実行する MCP サーバー"
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Nobuki Fujimoto" },
+]
+keywords = ["mcp", "model-context-protocol", "automation", "windows", "pywinauto", "rei-aios"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Systems Administration",
+    "Natural Language :: Japanese",
+]
+dependencies = [
+    "mcp>=2.0.0",
+]
+
+[project.optional-dependencies]
+# Windows accessibility API (Phase 2) を使う場合のみ必要。
+# 非 Windows 環境では find_element が graceful error を返し、他の action は影響を受けない。
+windows = [
+    "pywinauto>=0.6.9",
+    "Pillow>=10.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/fc0web/rei-automator-mcp"
+Repository = "https://github.com/fc0web/rei-automator-mcp"
+Issues = "https://github.com/fc0web/rei-automator-mcp/issues"
+
+[project.scripts]
+rei-automator-mcp = "rei_automator_mcp.__main__:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+rei_automator_mcp = ["*.ps1"]
