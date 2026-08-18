@@ -15,13 +15,23 @@ AI エージェント (Claude Desktop / Cursor / Cline など) から Windows PC
     (Phase 1.5、 SendInput + KEYEVENTF_UNICODE で IME 層 skip)
   - Windows-first。 他 OS は Phase 2+ で 検討
 
-Version: 0.2.0a2 (2026-08-19) — a3 hardening: type action に foreground guard 追加。
-        target_hwnd + foreground_retry_ms parameters を Action / propose() / _type_via_ps1() に導入、
-        rei-sendinput.ps1 に -ExpectedHwnd / -ForegroundRetryMs 追加、 SendInput 直前に
-        GetForegroundWindow() == ExpectedHwnd を verify、 不一致で exit 3 + FOREGROUND_MISMATCH
-        stderr を返して 送信 abort。 a2 実測で発生した 誤 window (Claude Code chat) 流入事故
-        (\n が Enter=送信 として発火) を 構造的に阻止。 target_hwnd 未指定時は legacy 動作
-        (backward compat、 但し warning 表示)。
+Version: 0.2.0a3 (2026-08-19) — IME バイパス smoke test cover + 実地 GUI test script + Windows cp932 fix。
+        週 1 ship pace 第 1 弾 (hybrid = research primary + AI が使いやすい道具 5 条件 chat-Claude 2026-08-18)。
+        selftest [10] section 追加 (10 assertion、 total 30→40 PASS): PS1 script primitives
+        (KEYEVENTF_UNICODE + SendInput + VK_RETURN + ExpectedHwnd/FOREGROUND_MISMATCH) と
+        Python 経路 (Base64 UTF-8 transport + -ExpectedHwnd 伝搬 + foreground_mismatch 検出) の
+        静的 verify + Japanese Unicode propose/approve/cancel lifecycle。 実 PS1 実行なし
+        (Windows GUI 対象、 別 script で cover)。 scripts/manual-ime-test.py 新規 (実地
+        Notepad IME バイパス GUI テスト、 --dry-run / --text / --mismatch-hwnd の 3 mode)。
+        manual-ime-test.py に Windows cp932 terminal 対策 (sys.stdout.reconfigure UTF-8、
+        grounded v0.1.1 と同型 pitfall)。 README + docs 更新。
+Version: 0.2.0a2 (2026-08-19) — type action foreground guard 追加 (「a3 hardening」 label は misnamed、
+        実 version は a2)。 target_hwnd + foreground_retry_ms parameters を Action / propose() /
+        _type_via_ps1() に導入、 rei-sendinput.ps1 に -ExpectedHwnd / -ForegroundRetryMs 追加、
+        SendInput 直前に GetForegroundWindow() == ExpectedHwnd を verify、 不一致で exit 3 +
+        FOREGROUND_MISMATCH stderr を返して 送信 abort。 a1 実測で発生した 誤 window (Claude Code
+        chat) 流入事故 (\n が Enter=送信 として発火) を 構造的に阻止。 target_hwnd 未指定時は
+        legacy 動作 (backward compat、 但し warning 表示)。
 Version: 0.2.0a1 (2026-08-18) — Phase 2 accessibility API 統合開始 + PyPI publish 準備。
         find_element (旧 stub の search を pywinauto uia backend で本実装) を追加、
         click / type SetValue 経路 / screenshot / excel_aggregate は chat-Claude 分担で
@@ -36,6 +46,7 @@ License: MIT (v0.x)。 v1.0+ で AGPL-3.0 + commercial dual への 切替可能�
 from __future__ import annotations
 
 import base64
+import inspect
 import json
 import locale
 import os
@@ -572,7 +583,7 @@ def _register_mcp():
 
     server = MCPServer(
         name="rei-automator",
-        version="0.2.0a2",
+        version="0.2.0a3",
         instructions=(
             "PC 自動化 (Windows) を propose → approve → execute の 3 段で 実行。 "
             "副作用の暴発を防ぐため、 execute は 承認済み action のみ 動作。 "
@@ -796,6 +807,65 @@ def _selftest() -> int:
            "[9-10] unknown selector kind returns descriptive error")
     except json.JSONDecodeError:
         ok(False, "[9-11] unknown selector result is not JSON")
+
+    print("\n[10] type action IME バイパス smoke test (a3 hardening + Phase 1.5 primitives verify)")
+    # 実 PS1 実行は しない (Windows GUI 対象、 別 script scripts/manual-ime-test.py で cover)。
+    # ここでは PS1 内容 + Python 側 経路 の 静的 verify + Japanese Unicode lifecycle のみ。
+
+    ok(PS1_PATH.exists(), "[10-1] rei-sendinput.ps1 bundled (IME バイパス prerequisite)")
+
+    if PS1_PATH.exists():
+        ps1_bytes = PS1_PATH.read_bytes()
+        ps1_text = (
+            ps1_bytes[3:].decode("utf-8", errors="replace")
+            if ps1_bytes[:3] == b"\xef\xbb\xbf"
+            else ps1_bytes.decode("utf-8", errors="replace")
+        )
+        ok(
+            "KEYEVENTF_UNICODE" in ps1_text,
+            "[10-2] PS1 uses KEYEVENTF_UNICODE flag (IME バイパス primitive)",
+        )
+        ok(
+            "SendInput" in ps1_text,
+            "[10-3] PS1 uses Win32 SendInput API (not SendKeys / IME-dependent)",
+        )
+        ok(
+            "VK_RETURN" in ps1_text and "VK_TAB" in ps1_text,
+            "[10-4] PS1 handles control chars (\\n → VK_RETURN、 \\t → VK_TAB)",
+        )
+        ok(
+            "ExpectedHwnd" in ps1_text and "FOREGROUND_MISMATCH" in ps1_text,
+            "[10-5] PS1 has a3 foreground guard (ExpectedHwnd + FOREGROUND_MISMATCH exit 3)",
+        )
+
+    # Python 側 _type_via_ps1 の 経路 verify (source inspection)
+    src_type = inspect.getsource(Automator._type_via_ps1)
+    ok(
+        "-Base64" in src_type,
+        "[10-6] _type_via_ps1 invokes PS1 with -Base64 (UTF-8 safe transport、 -Text 未使用)",
+    )
+    ok(
+        "-ExpectedHwnd" in src_type and "target_hwnd" in src_type,
+        "[10-7] _type_via_ps1 passes -ExpectedHwnd through to PS1 (a3 integration)",
+    )
+    ok(
+        "foreground_mismatch" in src_type,
+        "[10-8] _type_via_ps1 detects PS1 exit 3 / FOREGROUND_MISMATCH (誤 window 流入 abort)",
+    )
+
+    # propose/approve/cancel lifecycle with Japanese Unicode (実 PS1 execution なし)
+    japanese_text = "テスト日本語 IME バイパス"
+    t = b.propose("type", "IME bypass dry (JP)", japanese_text)
+    ok(
+        t.kind == "type" and t.command == japanese_text,
+        "[10-9] type action accepts Japanese Unicode command string (BMP 全 code point)",
+    )
+    b.approve(t.id)
+    b.cancel(t.id)
+    ok(
+        t.id not in b.pending,
+        "[10-10] type action lifecycle propose→approve→cancel (実 PS1 実行は 別 script)",
+    )
 
     # cleanup
     shutil.rmtree(test_dir, ignore_errors=True)

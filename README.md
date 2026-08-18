@@ -62,10 +62,30 @@ pip install "pywinauto>=0.6.9" "Pillow>=10.0"
 ## 稼働確認 (selftest、 実装なし で 可)
 
 ```bash
-python rei_automator_mcp.py --selftest
+python -m rei_automator_mcp --selftest
 ```
 
-**30 test 全 PASS** で 稼働 準備完了 (Phase 1: 22 + Phase 2 `find_element`: 8)。 selftest は 分離 data dir (`~/.rei-automator-mcp-selftest/`) を 使うため 本番 log を 汚染しません。 pywinauto 未 install の環境でも 30/30 が 通ります (graceful degradation を 明示的に verify)。
+**40 test 全 PASS** で 稼働 準備完了 (Phase 1: 22 + Phase 2 `find_element`: 8 + IME バイパス smoke: 10)。 selftest は 分離 data dir (`~/.rei-automator-mcp-selftest/`) を 使うため 本番 log を 汚染しません。 pywinauto 未 install の環境でも 40/40 が 通ります (graceful degradation + 静的 verify を 明示的に verify)。
+
+### 実地 IME バイパス GUI テスト (a3 hardening、 optional)
+
+selftest [10] section は PS1 script の primitives (KEYEVENTF_UNICODE / SendInput / VK_RETURN / ExpectedHwnd) と Python 経路 (Base64 UTF-8 / target_hwnd 伝搬 / foreground_mismatch 検出) の **静的 verify** です。 Notepad を 実際に 起動して 「IME OFF 状態でも 日本語が 正しく入力される」 を 目視 verify するには 別 script:
+
+```bash
+# 基本 test (Notepad 起動 → 日本語文字列送信 → 目視確認)
+python scripts/manual-ime-test.py
+
+# 送信文字列を明示
+python scripts/manual-ime-test.py --text "こんにちは 世界 🌱"
+
+# foreground guard verify (意図的に不一致 hwnd、 exit 3 で abort されることを verify)
+python scripts/manual-ime-test.py --mismatch-hwnd
+
+# Notepad 起動なし (PS1 + PowerShell 存在確認のみ)
+python scripts/manual-ime-test.py --dry-run
+```
+
+**Windows-only** (pywinauto + PowerShell 必要)。 dry-run は 非 Windows でも 動きますが 存在確認までです。
 
 ---
 
