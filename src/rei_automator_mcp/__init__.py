@@ -15,6 +15,13 @@ AI エージェント (Claude Desktop / Cursor / Cline など) から Windows PC
     (Phase 1.5、 SendInput + KEYEVENTF_UNICODE で IME 層 skip)
   - Windows-first。 他 OS は Phase 2+ で 検討
 
+Version: 0.2.0a2 (2026-08-19) — a3 hardening: type action に foreground guard 追加。
+        target_hwnd + foreground_retry_ms parameters を Action / propose() / _type_via_ps1() に導入、
+        rei-sendinput.ps1 に -ExpectedHwnd / -ForegroundRetryMs 追加、 SendInput 直前に
+        GetForegroundWindow() == ExpectedHwnd を verify、 不一致で exit 3 + FOREGROUND_MISMATCH
+        stderr を返して 送信 abort。 a2 実測で発生した 誤 window (Claude Code chat) 流入事故
+        (\n が Enter=送信 として発火) を 構造的に阻止。 target_hwnd 未指定時は legacy 動作
+        (backward compat、 但し warning 表示)。
 Version: 0.2.0a1 (2026-08-18) — Phase 2 accessibility API 統合開始 + PyPI publish 準備。
         find_element (旧 stub の search を pywinauto uia backend で本実装) を追加、
         click / type SetValue 経路 / screenshot / excel_aggregate は chat-Claude 分担で
@@ -94,6 +101,13 @@ class Action:
     source_module: str = "mcp"
     result: str | None = None
     executed_at: float | None = None  # unix seconds
+    # a3 (2026-08-18) — foreground safety for type action.
+    # target_hwnd = None : legacy (foreground 検証なし、 warning 表示)
+    # target_hwnd = int  : SendInput 直前に GetForegroundWindow() == target_hwnd 検証、
+    #                      不一致なら送信 abort。 誤 window 流入事故を構造的に防ぐ。
+    # foreground_retry_ms: 一致するまで N ms リトライ (200-500 推奨)。
+    target_hwnd: int | None = None
+    foreground_retry_ms: int = 0
 
 
 def _now_ms() -> int:
@@ -127,7 +141,10 @@ class Automator:
 
     # ── lifecycle ─────────────────────────────────────────
 
-    def propose(self, kind: str, label: str, command: str, source_module: str = "mcp") -> Action:
+    def propose(
+        self, kind: str, label: str, command: str, source_module: str = "mcp",
+        target_hwnd: int | None = None, foreground_retry_ms: int = 0,
+    ) -> Action:
         if kind not in ACTION_KINDS:
             raise ValueError(f"未知の action kind: {kind}")
         self._id_counter += 1
@@ -139,6 +156,8 @@ class Automator:
             approved=self.auto_approve,
             logic_basis=f"{kind} from {source_module}",
             source_module=source_module,
+            target_hwnd=target_hwnd,
+            foreground_retry_ms=foreground_retry_ms,
         )
         self.pending[action.id] = action
         return action
@@ -237,7 +256,12 @@ class Automator:
 
         if k == "type":
             # Phase 1.5 rei-sendinput.ps1 経由 (IME bypass)
-            return self._type_via_ps1(cmd)
+            # a3 (2026-08-18) — foreground safety verify を pass-through
+            return self._type_via_ps1(
+                cmd,
+                target_hwnd=action.target_hwnd,
+                foreground_retry_ms=action.foreground_retry_ms,
+            )
 
         if k == "find_element":
             # Phase 2 impl 順序 #2 (chat-Claude 設計書 §2-3、 search 改名)。
@@ -447,7 +471,10 @@ class Automator:
 
     # ── type via PS1 (Phase 1.5 統合) ─────────────────────
 
-    def _type_via_ps1(self, text: str) -> str:
+    def _type_via_ps1(
+        self, text: str, target_hwnd: int | None = None,
+        foreground_retry_ms: int = 0,
+    ) -> str:
         if not PS1_PATH.exists():
             return (
                 f"type failed: rei-sendinput.ps1 not found at {PS1_PATH}. "
@@ -457,21 +484,29 @@ class Automator:
         if not ps_exe:
             return "type failed: powershell.exe / pwsh どちらも PATH に見つからない"
         b64 = base64.b64encode(text.encode("utf-8")).decode("ascii")
+        args = [
+            ps_exe, "-NoProfile", "-NonInteractive",
+            "-ExecutionPolicy", "Bypass",
+            "-File", str(PS1_PATH),
+            "-Base64", b64,
+        ]
+        if target_hwnd is not None:
+            args += ["-ExpectedHwnd", str(int(target_hwnd))]
+            if foreground_retry_ms > 0:
+                args += ["-ForegroundRetryMs", str(int(foreground_retry_ms))]
         try:
-            r = subprocess.run(
-                [
-                    ps_exe, "-NoProfile", "-NonInteractive",
-                    "-ExecutionPolicy", "Bypass",
-                    "-File", str(PS1_PATH),
-                    "-Base64", b64,
-                ],
-                capture_output=True, timeout=30,
-            )
+            r = subprocess.run(args, capture_output=True, timeout=30)
             out = r.stdout.decode("utf-8", errors="replace") if r.stdout else ""
             err = r.stderr.decode("utf-8", errors="replace") if r.stderr else ""
+            # a3 (2026-08-18): exit 3 は foreground mismatch (誤 window 流入防止 abort)。
+            if r.returncode == 3 or "FOREGROUND_MISMATCH" in err or "FOREGROUND_MISMATCH" in out:
+                return f"type aborted [foreground_mismatch]: {err.strip() or out.strip()}"
             if r.returncode != 0 or "OK sent=" not in out:
                 return f"type failed: exit={r.returncode}\nstdout={out}\nstderr={err}"
-            return f"type 完了: {out.strip()}"
+            prefix = "type 完了"
+            if target_hwnd is None:
+                prefix += " [WARN: target_hwnd 未指定 = foreground verify skip、 誤 window 流入リスク]"
+            return f"{prefix}: {out.strip()}"
         except subprocess.TimeoutExpired:
             return "type failed: PS1 実行 timeout (30 sec)"
 
@@ -537,7 +572,7 @@ def _register_mcp():
 
     server = MCPServer(
         name="rei-automator",
-        version="0.2.0a1",
+        version="0.2.0a2",
         instructions=(
             "PC 自動化 (Windows) を propose → approve → execute の 3 段で 実行。 "
             "副作用の暴発を防ぐため、 execute は 承認済み action のみ 動作。 "

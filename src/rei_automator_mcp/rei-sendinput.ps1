@@ -29,7 +29,17 @@ param(
     # 受け入れテスト時は 5000 程度を指定し、その間に対象ウィンドウ
     # (メモ帳等) をクリックしてフォーカスを移すこと。
     # TS から呼ぶ通常運用では 0 のまま。
-    [int]$StartDelayMs = 0
+    [int]$StartDelayMs = 0,
+
+    # a3 (2026-08-18) — 誤 window 流入事故 防止 の 構造的 guard。
+    # 0 = legacy (検証なし)、 それ以外 = 送信直前の GetForegroundWindow() と 一致確認、
+    # 不一致なら exit 3 + FOREGROUND_MISMATCH stderr を返して 送信を abort。
+    # a2 テスト (Claude Code chat 誤送信) 事故対応。
+    [long]$ExpectedHwnd = 0,
+
+    # ExpectedHwnd が 指定されている場合、 一致するまで最大 N ms リトライ。
+    # 一致しないまま deadline に達したら abort。 200-500 推奨。
+    [int]$ForegroundRetryMs = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -188,6 +198,31 @@ if ($StartDelayMs -gt 0) {
     for ($i = $sec; $i -gt 0; $i--) {
         Write-Host "  $i" -ForegroundColor Yellow
         Start-Sleep -Milliseconds 1000
+    }
+}
+
+# a3 (2026-08-18) — foreground verify guard (送信直前)。
+# 誤 window (chat / editor / password field 等) への SendInput 流入を構造的に阻止。
+if ($ExpectedHwnd -ne 0) {
+    Add-Type -Namespace ReiFg -Name Api -MemberDefinition @"
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+public static extern System.IntPtr GetForegroundWindow();
+"@
+    $expected = [System.IntPtr]::new($ExpectedHwnd)
+    $deadline = (Get-Date).AddMilliseconds([Math]::Max(0, $ForegroundRetryMs))
+    $current = [System.IntPtr]::Zero
+    while ($true) {
+        $current = [ReiFg.Api]::GetForegroundWindow()
+        if ($current -eq $expected) { break }
+        if ((Get-Date) -ge $deadline) { break }
+        Start-Sleep -Milliseconds 25
+    }
+    if ($current -ne $expected) {
+        $curInt = $current.ToInt64()
+        [Console]::Error.WriteLine(
+            "FOREGROUND_MISMATCH expected=$ExpectedHwnd actual=$curInt retry_ms=$ForegroundRetryMs"
+        )
+        exit 3
     }
 }
 
